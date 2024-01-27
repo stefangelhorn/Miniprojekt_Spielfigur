@@ -1,0 +1,14 @@
+Für nächstes Mal:
+
+1. Logik und Ui trennen
+- printField in Konsole (erledigt)
+- move in Playground (erledigt)
+
+2. Blockade vermeiden
+- Gegner auf 1 und 2 beim Start
+- Kein Gegnerischer Zug möglich muss gelöst werden (while Schleife zur Auswahl ersetzen)
+
+/*
+-> operator[] überladen und getField() dadurch ersetzt
+-> friend entfernt
+*/
