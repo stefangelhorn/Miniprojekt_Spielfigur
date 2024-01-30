@@ -1,0 +1,434 @@
+#include <iostream>
+#include <map>
+#include <set>
+#include <memory>
+#include <chrono>
+#include <random>
+#include <vector>
+#include <cassert>
+#include <sstream>
+#include <algorithm>
+
+/*
+    Standard Rules:
+    - White always starts at the left
+    - Black starts at random fields
+    - White wins, if all their pieces reach the right edge
+    - Black wins, if they cannot make further progress
+
+    Note:
+    - Black should have more pieces to make it interesting
+*/
+
+enum class Player
+{
+    WHITE,
+    BLACK
+};
+
+class Position
+{
+    int field_count = 1;
+    Player side_to_move = Player::WHITE;
+    int ply_count = 1;
+    std::set<int> white_fields;
+    std::set<int> black_fields;
+
+public:
+    Position() {}
+    Position(const Position &other) : field_count{other.field_count},
+                                      side_to_move{other.side_to_move}, ply_count{other.ply_count},
+                                      white_fields{other.white_fields}, black_fields{other.black_fields}
+    {
+    }
+
+    Position &operator=(const Position &other)
+    {
+        field_count = other.field_count;
+        side_to_move = other.side_to_move;
+        ply_count = other.ply_count;
+        white_fields = other.white_fields;
+        black_fields = other.black_fields;
+        return *this;
+    }
+
+    void toggle_player()
+    {
+        side_to_move = side_to_move == Player::WHITE ? Player::BLACK : Player::WHITE;
+    }
+
+    void inc_ply_count() { ++ply_count; }
+    void dec_ply_count() { --ply_count; }
+
+    std::set<int> &active_fields() { return side_to_move == Player::WHITE ? white_fields : black_fields; }
+    const std::set<int> &active_fields() const { return side_to_move == Player::WHITE ? white_fields : black_fields; }
+
+    std::set<int> &opponent_fields() { return side_to_move == Player::WHITE ? black_fields : white_fields; }
+    const std::set<int> &opponent_fields() const { return side_to_move == Player::WHITE ? black_fields : white_fields; }
+
+    int move_direction() const
+    {
+        return side_to_move == Player::WHITE ? 1 : -1;
+    }
+
+    bool is_legal_target(int field) const
+    {
+        return field < 0 ? false : field >= field_count             ? false
+                               : opponent_fields().count(field) > 0 ? false
+                               : active_fields().count(field) > 0   ? false
+                                                                    : true;
+    }
+
+    std::string to_string() const
+    {
+        std::ostringstream oss;
+        for (int field = 0; field < field_count; ++field)
+        {
+            oss << (white_fields.count(field) > 0 ? 'W' : black_fields.count(field) > 0 ? 'B'
+                                                                                        : '_');
+        }
+        oss << " " << (side_to_move == Player::WHITE ? 'W' : 'B') << " " << ply_count;
+        return oss.str();
+    }
+
+    void set_field_count(int _field_count) { field_count = _field_count; }
+    int get_field_count() const { return field_count; }
+
+    void set_side_to_move(Player player) { side_to_move = player; }
+    Player get_side_to_move() const { return side_to_move; }
+
+    void set_field(Player player, int field)
+    {
+        if (player == Player::WHITE)
+        {
+            white_fields.insert(field);
+        }
+        else
+        {
+            black_fields.insert(field);
+        }
+    }
+    std::set<int> &get_fields(Player player) { return player == Player::WHITE ? white_fields : black_fields; }
+    const std::set<int> &get_fields(Player player) const { return player == Player::WHITE ? white_fields : black_fields; }
+
+    void set_ply_count(int _ply_count) { ply_count = _ply_count; }
+};
+
+std::istream &operator>>(std::istream &is, Position &position)
+{
+    std::string fields;
+    is >> fields;
+    std::string side_to_move;
+    is >> side_to_move;
+    int ply_count;
+    is >> ply_count;
+
+    // Parse Position String
+    position.set_field_count(fields.size());
+    for (int field = 0; field < position.get_field_count(); ++field)
+    {
+        char c = fields[field];
+        if (c == 'W')
+        {
+            position.set_field(Player::WHITE, field);
+        }
+        else if (c == 'B')
+        {
+            position.set_field(Player::BLACK, field);
+        }
+        else if (c == '_')
+        {
+            continue;
+        }
+        else
+        {
+            assert(false);
+        }
+    }
+    position.set_side_to_move((side_to_move == "W") ? Player::WHITE : Player::BLACK);
+    position.set_ply_count(ply_count);
+
+    return is;
+}
+
+Position operator""_pos(const char *str)
+{
+    std::istringstream iss{str};
+    Position position;
+    iss >> position;
+    return position;
+}
+
+class Move
+{
+public:
+    virtual void make(Position &) const = 0;
+    virtual void undo(Position &) const = 0;
+    virtual ~Move() {}
+    virtual std::string to_string() const = 0;
+};
+
+class PassMove : public Move
+{
+public:
+    virtual void make(Position &position) const override
+    {
+        position.toggle_player();
+        position.inc_ply_count();
+    }
+    virtual void undo(Position &position) const override
+    {
+        position.dec_ply_count();
+        position.toggle_player();
+    }
+    virtual std::string to_string() const { return "PASS"; }
+};
+
+class RegularMove : public Move
+{
+    int from, to;
+
+public:
+    RegularMove(int _from, int _to) : from{_from}, to{_to} {}
+    virtual void make(Position &position) const override
+    {
+        assert(!position.is_legal_target(from));
+        assert(position.is_legal_target(to));
+
+        position.active_fields().erase(from);
+        position.active_fields().insert(to);
+
+        position.toggle_player();
+        position.inc_ply_count();
+    }
+    virtual void undo(Position &position) const override
+    {
+        position.dec_ply_count();
+        position.toggle_player();
+
+        assert(position.is_legal_target(from));
+        assert(!position.is_legal_target(to));
+
+        position.active_fields().erase(to);
+        position.active_fields().insert(from);
+    }
+    virtual std::string to_string() const
+    {
+        std::ostringstream oss;
+        oss << "REGULAR MOVE FROM " << from << " TO " << to;
+        return oss.str();
+    }
+};
+
+class JumpMove : public Move
+{
+    int from, to;
+
+public:
+    JumpMove(int _from, int _to) : from{_from}, to{_to} {}
+    virtual void make(Position &position) const override
+    {
+        assert(!position.is_legal_target(from));
+        assert(position.is_legal_target(to));
+
+        position.active_fields().erase(from);
+        position.active_fields().insert(to);
+
+        position.toggle_player();
+        position.inc_ply_count();
+    }
+    virtual void undo(Position &position) const override
+    {
+        position.dec_ply_count();
+        position.toggle_player();
+
+        assert(position.is_legal_target(from));
+        assert(!position.is_legal_target(to));
+
+        position.active_fields().erase(to);
+        position.active_fields().insert(from);
+    }
+    virtual std::string to_string() const
+    {
+        std::ostringstream oss;
+        oss << "JUMP MOVE FROM " << from << " TO " << to;
+        return oss.str();
+    }
+};
+
+class MoveGenerator
+{
+public:
+    std::vector<std::shared_ptr<Move>> generate(const Position &position) const
+    {
+        std::vector<std::shared_ptr<Move>> move_list;
+        for (int from : position.active_fields())
+        {
+            int move_to = from + position.move_direction();
+            if (position.is_legal_target(move_to))
+            {
+                move_list.push_back(std::make_shared<RegularMove>(from, move_to));
+            }
+            else
+            {
+                int jump_to = from + 2 * position.move_direction();
+                if (position.opponent_fields().count(move_to) > 0 && position.is_legal_target(jump_to))
+                {
+                    move_list.push_back(std::make_shared<JumpMove>(from, jump_to));
+                }
+            }
+        }
+        if (move_list.size() == 0 && position.get_side_to_move() == Player::WHITE)
+        {
+            move_list.push_back(std::make_shared<PassMove>());
+        }
+        return move_list;
+    }
+};
+
+class Evaluator
+{
+public:
+    enum class Evaluation
+    {
+        WHITE_WINS,
+        BLACK_WINS,
+        PENDING
+    };
+    Evaluation evaluate(const Position &position, const MoveGenerator &move_generator)
+    {
+
+        int white_piece_count = position.get_fields(Player::WHITE).size();
+        bool is_won = true;
+        for (int field = position.get_field_count() - white_piece_count; field < position.get_field_count(); ++field)
+        {
+            if (position.get_fields(Player::WHITE).count(field) < 1)
+            {
+                is_won = false;
+                break;
+            }
+        }
+        if (is_won)
+        {
+            return Evaluation::WHITE_WINS;
+        }
+        if (position.get_side_to_move() == Player::BLACK)
+        {
+            auto move_list = move_generator.generate(position);
+            if (move_list.size() == 0)
+            {
+                return Evaluation::BLACK_WINS;
+            }
+        }
+        return Evaluation::PENDING;
+    }
+};
+
+class Engine
+{
+protected:
+    MoveGenerator move_generator;
+
+public:
+    virtual std::shared_ptr<Move> get_move(const Position &) = 0;
+    virtual ~Engine() {}
+};
+
+class RandomEngine : public Engine
+{
+    std::default_random_engine random;
+
+public:
+    RandomEngine() { random.seed(std::chrono::high_resolution_clock{}.now().time_since_epoch().count()); }
+    virtual std::shared_ptr<Move> get_move(const Position &position) override
+    {
+        auto move_list = move_generator.generate(position);
+        std::shuffle(move_list.begin(), move_list.end(), random);
+        return move_list.back();
+    }
+};
+
+class SearchEngine : public Engine
+{
+    Position current_position;
+    std::shared_ptr<Move> best_move;
+    int max_depth = 12;
+    int static_evaluation()
+    {
+        int eval = 0;
+        for (int field : current_position.get_fields(Player::WHITE))
+        {
+            eval -= current_position.get_field_count() - field;
+        }
+        for (int field : current_position.get_fields(Player::BLACK))
+        {
+            eval += current_position.get_field_count() - field;
+        }
+        return eval;
+    }
+    int search(int alpha, int beta, int depth) {
+        if (depth <= 0){
+            return static_evaluation();
+        }
+        // TODO
+    }
+
+public:
+};
+
+class Game
+{
+    Position position;
+    MoveGenerator move_generator;
+    Evaluator evaluator;
+    std::default_random_engine random;
+    std::vector<std::shared_ptr<Move>> moves;
+
+public:
+    Game() { random.seed(std::chrono::high_resolution_clock{}.now().time_since_epoch().count()); }
+
+    void setup_random_position(int field_count, int player_pieces, int opponent_pieces)
+    {
+        assert(field_count >= player_pieces + opponent_pieces);
+        position.set_field_count(field_count);
+        for (int field = 0; field < player_pieces; ++field)
+        {
+            position.set_field(Player::WHITE, field);
+        }
+        std::vector<int> free_fields;
+        for (int field = player_pieces; field < field_count; ++field)
+        {
+            free_fields.push_back(field);
+        }
+        std::shuffle(free_fields.begin(), free_fields.end(), random);
+        for (int i = 0; i < opponent_pieces; ++i)
+        {
+            position.set_field(Player::BLACK, free_fields[i]);
+        }
+    }
+    void setup_position(const Position &other_position) { position = other_position; }
+
+    void play_out()
+    {
+        while (evaluator.evaluate(position, move_generator) == Evaluator::Evaluation::PENDING)
+        {
+            std::cout << position.to_string() << "\n";
+            auto move_list = move_generator.generate(position);
+            std::shuffle(move_list.begin(), move_list.end(), random);
+            auto move = move_list.back();
+            std::cout << move->to_string() << "\n";
+            moves.push_back(move);
+            move->make(position);
+        }
+        std::cout << position.to_string() << "\n";
+        std::cout << (evaluator.evaluate(position, move_generator) == Evaluator::Evaluation::WHITE_WINS ? "White Wins" : "Black Wins");
+    }
+};
+
+int main()
+{
+    Game game;
+    game.setup_random_position(12, 2, 4);
+    game.play_out();
+    return 0;
+}

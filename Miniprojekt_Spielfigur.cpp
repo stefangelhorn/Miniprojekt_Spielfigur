@@ -1,17 +1,27 @@
-#include <cstdio>
-#include <cstring>
-#include <ctime>
+#include <algorithm>
+#include <chrono>
 #include <iostream>
+#include <random>
 #include <sstream>
 
 const int FIELDS = 12;
 
-enum class Playfield { START = 0, DESTINATION = FIELDS - 1 };
+struct Move {
+  unsigned short from;
+  unsigned short to;
+  std::string info;
+  Move(unsigned short _from, unsigned short _to, const std::string &_info)
+      : from(_from), to(_to), info{_info} {}
+};
 
 class Playground {
   char playfields[FIELDS]; // Spielfelder
   unsigned short enemies;  // Anzahl gegnerischer Spielsteine
   unsigned short recentPlayerfield = 0;
+  bool passed =
+      false; // Variable wird true gesetzt, sobald eine Seite nicht ziehen kann.
+  std::default_random_engine rand; // Zufallszahlengenerator
+  bool game_over = false;
 
   void setEnemy() {
     unsigned short setField = 0;
@@ -39,15 +49,15 @@ class Playground {
 public:
   Playground(unsigned short _enemies = 3, char pChar = 'P', char eChar = 'E')
       : enemies(_enemies), playerChar(pChar), enemyChar(eChar) {
+    rand.seed(
+        std::chrono::high_resolution_clock{}.now().time_since_epoch().count());
     init();
-    srand(time(nullptr)); // Zufallsgeneraator anschmeißen
     distributeEnemies();
     playfields[0] = playerChar;
   }
 
-    const char playerChar;
-    const char enemyChar;
-
+  const char playerChar;
+  const char enemyChar;
 
   void changeEnemyField(unsigned short from, unsigned short to) {
     playfields[from] = '_';     // "Altes" Feld freigeben
@@ -55,33 +65,28 @@ public:
   }
 
   // Gibt den Inhalt des Feldes zurück.
-  char operator[](unsigned short field) const { return playfields[field]; } // ersetzt den Getter
-  char& operator[](unsigned short field) // ersetzt den Setter
-  {
+  char operator[](unsigned short field) const {
     return playfields[field];
-  }
+  } // ersetzt den Getter
+  char &operator[](unsigned short field) { return playfields[field]; }
 
   void setPlayerField(unsigned short field) {
     playfields[recentPlayerfield] =
         '_'; // Bisher besetztes Feld des Spielers wird freigegeben
     playfields[field] = playerChar; // Spieler wird auf neues Feld gesetzt
     recentPlayerfield = field;      // Membervariable wird aktualisiert
+    if (recentPlayerfield == FIELDS - 1) {
+      game_over = true;
+    }
   }
 
   unsigned short getPlayerfield() const { return recentPlayerfield; }
 
-  bool gamOver() const {
-    if (playfields[FIELDS - 1] == playerChar) {
-      return true;
-    }
-    return false;
-  }
+  bool gameOver() const { return game_over; }
 
-  std::string toString() const 
-  {
+  std::string toString() const {
     std::ostringstream oss;
-    for (int i = 0; i < FIELDS; i++) 
-    {
+    for (int i = 0; i < FIELDS; i++) {
       oss << ' ' << playfields[i] << ' ';
     }
     oss << '\n';
@@ -90,35 +95,68 @@ public:
 
   /// @brief Diese Methode liefert ein zufälliges Feld, das vom Gegner belegt
   /// ist UND in der Lage ist zu ziehen...
-  unsigned short getEnemyField() 
-  {
-    unsigned short index = 0;
-    while (true) 
-    {
-      index = (rand() % (FIELDS - 1)) + 1;
-      if (playfields[index] == enemyChar && playfields[index - 1] != enemyChar) {
-        if (playfields[index - 1] == playerChar && playfields[index - 2] == enemyChar) 
+  Move getEnemyField() {
+    std::vector<Move> legalMoves;
+
+    for (int i = 1; i < FIELDS; i++) {
+      if (playfields[i] == enemyChar) // Gegnerfigur gefunden
+      {
+        if (playfields[i - 1] == '_') // wenn Folgefeld frei
         {
-          continue;
+          legalMoves.emplace_back(
+              i, i - 1,
+              "MOVE " + std::to_string(i) + " to " +
+                  std::to_string(i -
+                                 1)); // Nimm diesen Gegner in "legalFields" auf
+        } else if (playfields[i - 1] ==
+                   playerChar) // Wenn Folgefeld mit Spielerfigur besetzt...
+        {
+          if (i >= 2 && playfields[i - 2] ==
+                            '_') // Prüfe, ob ein Sprung möglich ist (also zweik
+                                 // Felder weiter frei ist und wir uns noch auf
+                                 // dem Spielfeld befinden
+          {
+            legalMoves.emplace_back(
+                i, i - 2,
+                "JUMP " + std::to_string(i) + " to " +
+                    std::to_string(
+                        i - 2)); // Wenn dem so ist, in legalFields aufnehmen
+          }
         }
-        return index;
       }
     }
+
+    if (legalMoves.empty()) {
+      return Move{0, 0, "PASS"};
+    }
+
+    std::shuffle(legalMoves.begin(), legalMoves.end(), rand);
+
+    return legalMoves.back();
   }
 
-
-  void move(unsigned short playernumber)
-  {
-    if(playernumber == 0) // Spieler ist dran
+  void move(unsigned short playernumber) {
+    if (playernumber == 0) // Spieler ist dran
     {
-      if (playfields[recentPlayerfield + 1] == enemyChar) // Wenn nächstes Feld von Gegner besetzt
+      if (playfields[recentPlayerfield + 1] ==
+          enemyChar) // Wenn nächstes Feld von Gegner besetzt
       {
-        if (playfields[recentPlayerfield + 2] == '_') // Und dahinter frei ist...
+        if (playfields[recentPlayerfield + 2] ==
+            '_') // Und dahinter frei ist...
         {
           setPlayerField(recentPlayerfield + 2);
         }
         // Zweite if-Bedingung nicht zutrifft, darf der Spieler kein Feld bewegt
         // werden
+        else {
+          if (passed) {
+            std::cout << "Game over! No moves possible anymore.";
+            game_over = true;
+            return;
+          } else {
+            passed = true;
+          }
+        }
       } else // Andernfalls ist das Folgefeld frei und wird besetzt
       {
         setPlayerField(recentPlayerfield + 1);
@@ -127,15 +165,19 @@ public:
 
     else // Computer ist dran
     {
-      unsigned short randomEnemyFigure = getEnemyField();
-
-      if (playfields[randomEnemyFigure - 1] == '_') // Wenn das nächste Feld frei ist
+      Move randomMove = getEnemyField();
+      std::cout << randomMove.info << "\n";
+      if (randomMove.to == randomMove.from) // Wenn kein Zug möglich ist
       {
-        changeEnemyField(randomEnemyFigure, randomEnemyFigure - 1);
-      } else if (playfields[randomEnemyFigure - 1] == playerChar) // wenn nächstes Feld vom Spieler
-                                        // besetzt ist...
-      {
-        changeEnemyField(randomEnemyFigure, randomEnemyFigure - 2);
+        if (passed) {
+          std::cout << "Game Over! No moves possible anymore!\n";
+          game_over = true;
+          return;
+        }
+        passed = true;
+      } else {
+        changeEnemyField(randomMove.from, randomMove.to);
+        passed = false;
       }
     }
   }
@@ -151,8 +193,7 @@ public:
     unsigned short playernumber = 1;
 
     int count = 0; // Zählt die Anzahl der Züge
-    while (!playground.gamOver()) 
-    {
+    while (!playground.gameOver()) {
       std::cout << playground.toString();
       playground.move(playernumber = 1 - playernumber);
       std::cout << playground.toString();
@@ -162,7 +203,6 @@ public:
     std::cout << "count: " << count << '\n';
   }
 };
-
 
 int main() {
   Playground playground{3};
